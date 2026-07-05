@@ -14,6 +14,102 @@ const REPORTPLY: usize = 2;
 
 const SCORE_CHARS: [char; 6] = ['#', '-', '<', '=', '>', '+'];
 
+/// Result of scanning a position for legal, non-suicidal columns.
+enum Candidates {
+    /// The position's score is already forced (an unstoppable double threat,
+    /// or no safe column at all) -- no further search needed at this node.
+    Forced(i32),
+    /// `av[..count]` holds the safe, playable columns for this position, in
+    /// original left-to-right order (not yet history-ordered).
+    Open([usize; WIDTH], usize),
+}
+
+/// Scan for playable columns that don't immediately hand the opponent a
+/// win, with must-block / unstoppable-double-threat detection -- the exact
+/// candidate-generation logic from SearchGame.c's `ab`, factored out so both
+/// `ab` (recursive search) and `best_move` (root move selection) apply the
+/// same filtering rather than `best_move` re-deriving a weaker version of it.
+fn candidates(board: &Board) -> Candidates {
+    let side = board.nplies & 1;
+    let otherside = side ^ 1;
+    let other = board.color[otherside];
+
+    let mut av = [0usize; WIDTH];
+    let mut nav = 0usize;
+    let mut i = 0usize;
+    'scan: while i < WIDTH {
+        let newbrd = other | (1u64 << board.height[i]);
+        if !Board::is_legal(newbrd) {
+            i += 1;
+            continue;
+        }
+        let winontop = Board::is_legal_has_won(other | (2u64 << board.height[i]));
+        if Board::has_won(newbrd) {
+            // Opponent would win if given this square: we must take it,
+            // unless doing so hands them an immediate win on top anyway.
+            if winontop {
+                return Candidates::Forced(LOSS);
+            }
+            av[0] = i;
+            nav = 1;
+            let mut j = i + 1;
+            while j < WIDTH {
+                if Board::is_legal_has_won(other | (1u64 << board.height[j])) {
+                    return Candidates::Forced(LOSS); // a second, unstoppable threat elsewhere
+                }
+                j += 1;
+            }
+            break 'scan;
+        }
+        if !winontop {
+            av[nav] = i;
+            nav += 1;
+        }
+        i += 1;
+    }
+    if nav == 0 {
+        return Candidates::Forced(LOSS);
+    }
+    Candidates::Open(av, nav)
+}
+
+/// Selection-sort step: finds the highest-history-value column among
+/// `av[i..nav)`, moves it to position `i` (shifting the intervening entries
+/// up by one), and returns it. Ties are broken toward the EARLIEST
+/// (lowest-index) candidate -- this requires a strict `>`, not `>=`. An
+/// earlier port of this search used `>=` and, on the maximally symmetric
+/// empty-board position, ended up visiting ~2.7x more nodes for the same
+/// final score, because tie-breaking direction changes which subtrees get
+/// cut first. Shared by `ab`'s internal move loop and `best_move`'s
+/// root-level loop, so both benefit from the same ordering.
+fn pick_next_move(
+    history_side: &[i32; SIZE1],
+    board: &Board,
+    av: &mut [usize; WIDTH],
+    i: usize,
+    nav: usize,
+) -> usize {
+    let mut l = i;
+    let mut val = history_side[board.height[av[l]] as usize];
+    let mut j = i + 1;
+    while j < nav {
+        let v = history_side[board.height[av[j]] as usize];
+        if v > val {
+            val = v;
+            l = j;
+        }
+        j += 1;
+    }
+    let chosen = av[l];
+    let mut k = l;
+    while k > i {
+        av[k] = av[k - 1];
+        k -= 1;
+    }
+    av[i] = chosen;
+    chosen
+}
+
 pub struct Solver {
     pub tt: TransTable,
     history: [[i32; SIZE1]; 2],
@@ -28,14 +124,24 @@ pub struct Solver {
 
 impl Solver {
     pub fn new(tt_size: usize) -> Self {
-        Solver {
+        let mut solver = Solver {
             tt: TransTable::new(tt_size),
             history: [[0; SIZE1]; 2],
             nodes: 0,
             book_ply: 0,
             report_ply: 0,
             verbose: false,
-        }
+        };
+        // Seed with center-weighted defaults immediately -- `solve()` also
+        // re-seeds on every call (each solve is an independent position), so
+        // this doesn't change its behavior at all. But `best_move()` never
+        // calls `init_history` (it deliberately keeps history warm across a
+        // whole game), so without this, a freshly-constructed `Solver` used
+        // only via `best_move()` would search with an all-zero history
+        // table -- and with everything tied at zero, move ordering quietly
+        // degrades to plain left-to-right column order.
+        solver.init_history();
+        solver
     }
 
     /// Seed the history-heuristic table with the symmetric center-weighted
@@ -74,49 +180,11 @@ impl Solver {
             return DRAW; // one move left; by assumption the mover can't win
         }
         let side = board.nplies & 1;
-        let otherside = side ^ 1;
-        let other = board.color[otherside];
 
-        // Build the list of playable, non-suicidal columns, with immediate
-        // must-block / unstoppable-double-threat detection.
-        let mut av = [0usize; WIDTH];
-        let mut nav = 0usize;
-        {
-            let mut i = 0usize;
-            'scan: while i < WIDTH {
-                let newbrd = other | (1u64 << board.height[i]);
-                if !Board::is_legal(newbrd) {
-                    i += 1;
-                    continue;
-                }
-                let winontop = Board::is_legal_has_won(other | (2u64 << board.height[i]));
-                if Board::has_won(newbrd) {
-                    // Opponent would win if given this square: we must take it,
-                    // unless doing so hands them an immediate win on top anyway.
-                    if winontop {
-                        return LOSS;
-                    }
-                    av[0] = i;
-                    nav = 1;
-                    let mut j = i + 1;
-                    while j < WIDTH {
-                        if Board::is_legal_has_won(other | (1u64 << board.height[j])) {
-                            return LOSS; // a second, unstoppable threat elsewhere
-                        }
-                        j += 1;
-                    }
-                    break 'scan;
-                }
-                if !winontop {
-                    av[nav] = i;
-                    nav += 1;
-                }
-                i += 1;
-            }
-        }
-        if nav == 0 {
-            return LOSS;
-        }
+        let (mut av, nav) = match candidates(board) {
+            Candidates::Forced(score) => return score,
+            Candidates::Open(av, nav) => (av, nav),
+        };
         if board.nplies == SIZE - 2 {
             return DRAW; // two moves left, no immediate win possible for either side
         }
@@ -152,31 +220,7 @@ impl Solver {
 
         let mut i = 0usize;
         while i < nav {
-            // Selection sort by history value over the remaining candidates
-            // av[i..nav). Ties are broken toward the EARLIEST (lowest-index)
-            // candidate -- this requires a strict `>` here, not `>=`. An
-            // earlier port of this search used `>=` and, on the maximally
-            // symmetric empty-board position, ended up visiting ~2.7x more
-            // nodes than this version for the same final score, because
-            // tie-breaking direction changes which subtrees get cut first.
-            let mut l = i;
-            let mut val = self.history[side][board.height[av[l]] as usize];
-            let mut j = i + 1;
-            while j < nav {
-                let v = self.history[side][board.height[av[j]] as usize];
-                if v > val {
-                    val = v;
-                    l = j;
-                }
-                j += 1;
-            }
-            let chosen = av[l];
-            let mut k = l;
-            while k > i {
-                av[k] = av[k - 1];
-                k -= 1;
-            }
-            av[i] = chosen;
+            let chosen = pick_next_move(&self.history[side], board, &mut av, i, nav);
 
             board.make_move(chosen);
             let val = LOSSWIN - self.ab(board, LOSSWIN - beta, LOSSWIN - alpha);
@@ -255,42 +299,65 @@ impl Solver {
         (score, self.nodes, elapsed_ms)
     }
 
-    /// Choose the best legal column to play in the current position, using a
-    /// root-level alpha-beta scan over `ab()`. Unlike `solve`, this doesn't
-    /// clear the transposition table or reinitialize history -- for
-    /// interactive play, keep reusing the same `Solver` across a whole game
-    /// so later, shallower searches benefit from everything learned on
-    /// earlier turns. Returns `None` only if there are no legal moves
-    /// (board full) or the position is already lost for the side to move
-    /// after their opponent's last move -- callers should check win/draw
-    /// state themselves before calling this.
+    /// Choose the best legal column to play in the current position. Unlike
+    /// `solve`, this doesn't clear the transposition table or reinitialize
+    /// history -- for interactive play, keep reusing the same `Solver`
+    /// across a whole game so later, shallower searches benefit from
+    /// everything learned on earlier turns.
     ///
-    /// This doesn't reuse `ab()`'s internal immediate-threat pruning at the
-    /// root, so it's somewhat less efficient than `solve()` at finding a
-    /// score alone -- but it's the simplest correct way to recover *which*
-    /// move that score corresponds to, and the difference is minor next to
-    /// the cost of the recursive search itself.
+    /// Shares `ab`'s own candidate generation and history-based move
+    /// ordering (via `candidates`/`pick_next_move`), so the root gets the
+    /// same "try the most promising move first" benefit that makes the
+    /// rest of the search efficient -- trying columns in naive left-to-right
+    /// order here previously made this several times slower than `solve`
+    /// for equivalent positions, since the best root move (typically the
+    /// center column) was tried last instead of first.
+    ///
+    /// Returns `None` only if the board is completely full. If the position
+    /// is already lost regardless of what's played (e.g. an unstoppable
+    /// double threat), this still returns some legal column so the game can
+    /// continue -- callers should check win/draw state themselves before
+    /// calling this in the first place.
     pub fn best_move(&mut self, board: &mut Board) -> Option<usize> {
         self.nodes = 0;
         self.book_ply = board.nplies + BOOKPLY;
         self.report_ply = 0; // no per-node tracing during interactive play
+        let side = board.side();
+
+        // Fast path: an outright winning move needs no search, mirroring
+        // solve()'s own root-level pre-check.
+        for col in 0..WIDTH {
+            if Board::is_legal_has_won(board.color[side] | (1u64 << board.height[col])) {
+                return Some(col);
+            }
+        }
+
+        let (mut av, nav) = match candidates(board) {
+            Candidates::Forced(_) => {
+                // Lost regardless of what's played (or no safe column at
+                // all) -- just play any legal column so the game continues.
+                return (0..WIDTH).find(|&c| board.is_playable(c));
+            }
+            Candidates::Open(av, nav) => (av, nav),
+        };
+
         let mut best_col = None;
         let mut alpha = LOSS;
         let beta = WIN;
-        for col in 0..WIDTH {
-            if !board.is_playable(col) {
-                continue;
-            }
-            board.make_move(col);
+        let mut i = 0usize;
+        while i < nav {
+            let chosen = pick_next_move(&self.history[side], board, &mut av, i, nav);
+            board.make_move(chosen);
             let score = LOSSWIN - self.ab(board, LOSSWIN - beta, LOSSWIN - alpha);
             board.unmake_move();
             if best_col.is_none() || score > alpha {
-                best_col = Some(col);
+                best_col = Some(chosen);
                 alpha = score;
                 if alpha >= beta {
                     break; // found a proven win; can't do better
                 }
             }
+            i += 1;
         }
         best_col
     }

@@ -8,8 +8,9 @@
 //! an empty board to take roughly as long as a full from-scratch solve
 //! (tens of seconds), with subsequent moves much quicker.
 
-use c4::board::{Board, H1, HEIGHT, SIZE, WIDTH};
-use c4::search::Solver;
+use connect_four::board::{Board, H1, HEIGHT, SIZE, WIDTH};
+use connect_four::search::Solver;
+use clap::{Parser, ValueEnum};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     Terminal,
@@ -22,10 +23,65 @@ use std::sync::mpsc;
 use std::{error::Error, io, time::Duration};
 
 const TT_SIZE: usize = 8_306_069;
-//const TT_SIZE: usize = 15_999_961;
-// should be a prime no less than about 2^{SIZE1-LOCKSIZE}, e.g.
-// 4194301,8306069,8388593,15999961,33554393,67108859,134217689,268435399
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
+enum ControllerArg {
+    Human,
+    Ai,
+}
+
+impl From<ControllerArg> for Controller {
+    fn from(c: ControllerArg) -> Self {
+        match c {
+            ControllerArg::Human => Controller::Human,
+            ControllerArg::Ai => Controller::Ai,
+        }
+    }
+}
+
+/// Interactive Connect Four with an optional perfect-play AI opponent.
+#[derive(Parser, Debug)]
+#[command(
+    name = "play",
+    about = "Interactive Connect Four (perfect-play engine)"
+)]
+struct Cli {
+    /// Controller for Player 1 (red, moves first)
+    #[arg(long, value_enum, default_value = "human", ignore_case = true)]
+    player1: ControllerArg,
+
+    /// Controller for Player 2 (yellow)
+    #[arg(long, value_enum, default_value = "ai", ignore_case = true)]
+    player2: ControllerArg,
+
+    /// Starting position as a string of column digits 1..=7, e.g. "4453" --
+    /// same format `solve` reads from stdin. Board starts empty if omitted.
+    #[arg(long)]
+    moves: Option<String>,
+}
+
+/// Parse a `--moves`-style digit string into a `Board`, validating each move
+/// as it's applied (unlike `solve`'s stdin reader, which trusts its input).
+fn board_from_moves(spec: &str) -> Result<Board, String> {
+    let mut board = Board::new();
+    for (i, c) in spec.chars().enumerate() {
+        let Some(d) = c.to_digit(10) else { continue };
+        if d < 1 || d as usize > WIDTH {
+            continue; // matches solve's leniency: ignore out-of-range digits
+        }
+        let col = d as usize - 1;
+        if !board.is_playable(col) {
+            return Err(format!(
+                "column {} is already full at character {} of \"{}\"",
+                d,
+                i + 1,
+                spec
+            ));
+        }
+        board.make_move(col);
+    }
+    Ok(board)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Player {
@@ -58,6 +114,10 @@ struct FallingCoin {
 
 pub struct App {
     pub board: Board,
+    /// The position the game (re)starts from -- usually empty, but can be a
+    /// preloaded midgame position via `--moves`. `try_restart` returns here
+    /// rather than always going back to an empty board.
+    initial_board: Board,
     pub controllers: [Controller; 2],
     pub wins: [u32; 2],
     pub winner: Option<Player>,
@@ -67,15 +127,39 @@ pub struct App {
 }
 
 impl App {
+    /// Convenience constructor for an empty starting board.
+    #[allow(dead_code)]
     pub fn new(controllers: [Controller; 2]) -> Self {
-        App {
-            board: Board::new(),
+        Self::from_position(Board::new(), controllers)
+    }
+
+    /// Start (or restart into) a specific position rather than an empty
+    /// board -- e.g. one loaded from a `--moves` column-digit string.
+    pub fn from_position(board: Board, controllers: [Controller; 2]) -> Self {
+        let mut app = App {
+            board,
+            initial_board: board,
             controllers,
             wins: [0, 0],
             winner: None,
             is_draw: false,
             selected_column: WIDTH / 2,
             falling_coin: None,
+        };
+        app.refresh_game_over_state();
+        app
+    }
+
+    /// Check whether the current board is already a completed game --
+    /// needed because a preloaded position skips the normal
+    /// win/draw-detection-on-drop path in `update`.
+    fn refresh_game_over_state(&mut self) {
+        if Board::has_won(self.board.color[0]) {
+            self.winner = Some(Player::Player1);
+        } else if Board::has_won(self.board.color[1]) {
+            self.winner = Some(Player::Player2);
+        } else if self.board.nplies == SIZE {
+            self.is_draw = true;
         }
     }
 
@@ -130,11 +214,12 @@ impl App {
     }
 
     pub fn try_restart(&mut self) {
-        self.board.reset();
+        self.board = self.initial_board;
         self.winner = None;
         self.is_draw = false;
         self.falling_coin = None;
         self.selected_column = WIDTH / 2;
+        self.refresh_game_over_state();
     }
 
     /// Advance the falling-coin animation by one tick. Commits the move to
@@ -340,14 +425,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     };
 
+    let cli = Cli::parse();
+
+    let board = match &cli.moves {
+        Some(spec) => match board_from_moves(spec) {
+            Ok(b) => b,
+            Err(msg) => {
+                eprintln!("Invalid --moves value: {msg}");
+                std::process::exit(1);
+            }
+        },
+        None => Board::new(),
+    };
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Human (Player 1) vs. AI (Player 2) by default.
-    let mut app = App::new([Controller::Human, Controller::Ai]);
+    let mut app = App::from_position(board, [cli.player1.into(), cli.player2.into()]);
     let result = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;

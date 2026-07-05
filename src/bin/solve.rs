@@ -8,9 +8,9 @@
 //! newline. This is a deliberate, minor divergence -- it only affects
 //! malformed/truncated input, never a normal run.
 
-use c4::board::{Board, HEIGHT, SIZE1, WIDTH};
-use c4::search::{Solver, format_moves, intlog};
-use c4::tt::LOCKSIZE;
+use connect_four::board::{Board, HEIGHT, SIZE1, WIDTH};
+use connect_four::search::{Solver, format_moves, intlog};
+use connect_four::tt::LOCKSIZE;
 use std::io::{self, BufRead, Write};
 
 const TT_SIZE: usize = 8_306_069;
