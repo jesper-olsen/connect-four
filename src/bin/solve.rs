@@ -21,14 +21,16 @@ const TT_SIZE: usize = 8_306_069;
 const SCORE_CHARS: [char; 6] = ['#', '-', '<', '=', '>', '+'];
 
 fn main() {
-    debug_assert!(
-        SIZE1 <= 64,
-        "bitboard must fit in a u64 for this board size"
-    );
-    debug_assert!(
-        TT_SIZE >= ((1usize << (SIZE1 - LOCKSIZE as usize)) * 31 / 32),
-        "transposition table size is significantly smaller than recommended for this board size"
-    );
+    const {
+        debug_assert!(
+            SIZE1 <= 64,
+            "bitboard must fit in a u64 for this board size"
+        );
+        debug_assert!(
+            TT_SIZE >= ((1usize << (SIZE1 - LOCKSIZE as usize)) * 31 / 32),
+            "transposition table size is significantly smaller than recommended for this board size"
+        );
+    }
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -54,10 +56,11 @@ fn main() {
 
         let mut board = Board::new();
         for c in line.chars() {
-            if let Some(d) = c.to_digit(10) {
-                if d >= 1 && d as usize <= WIDTH {
-                    board.make_move(d as usize - 1);
-                }
+            if let Some(d) = c.to_digit(10)
+                && d >= 1
+                && d as usize <= WIDTH
+            {
+                board.make_move(d as usize - 1);
             }
         }
 

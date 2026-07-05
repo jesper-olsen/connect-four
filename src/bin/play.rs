@@ -8,9 +8,9 @@
 //! an empty board to take roughly as long as a full from-scratch solve
 //! (tens of seconds), with subsequent moves much quicker.
 
+use clap::{Parser, ValueEnum};
 use connect_four::board::{Board, H1, HEIGHT, SIZE, WIDTH};
 use connect_four::search::Solver;
-use clap::{Parser, ValueEnum};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     Terminal,
@@ -296,15 +296,15 @@ pub fn run_app(
                     let _ = tx.send((col, s));
                 });
                 ai_move_rx = Some(rx);
-            } else if let Some(rx) = &ai_move_rx {
-                if let Ok((chosen, returned_solver)) = rx.try_recv() {
-                    solver = Some(returned_solver);
-                    if let Some(col) = chosen {
-                        app.selected_column = col;
-                        app.try_drop_coin();
-                    }
-                    ai_move_rx = None;
+            } else if let Some(rx) = &ai_move_rx
+                && let Ok((chosen, returned_solver)) = rx.try_recv()
+            {
+                solver = Some(returned_solver);
+                if let Some(col) = chosen {
+                    app.selected_column = col;
+                    app.try_drop_coin();
                 }
+                ai_move_rx = None;
             }
         }
     }
@@ -394,13 +394,14 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
                     Player::Player1 => " 🔴 ",
                     Player::Player2 => " 🟡 ",
                 };
-            } else if let Some(falling) = app.falling_coin {
-                if falling.col == col && falling.animation_row.round() as usize == row {
-                    token = match app.current_turn() {
-                        Player::Player1 => " 🔴 ",
-                        Player::Player2 => " 🟡 ",
-                    };
-                }
+            } else if let Some(falling) = app.falling_coin
+                && falling.col == col
+                && falling.animation_row.round() as usize == row
+            {
+                token = match app.current_turn() {
+                    Player::Player1 => " 🔴 ",
+                    Player::Player2 => " 🟡 ",
+                };
             }
             board_text.push_str(&format!("|{}", token));
         }
