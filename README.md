@@ -48,7 +48,7 @@ Usage: play (interactive)
 cargo run --release --bin play                                     # Human (red) vs AI (yellow)
 cargo run --release --bin play -- --player1 human --player2 human  # two humans
 cargo run --release --bin play -- --player1 ai --player2 ai        # watch the AI play itself
-cargo run --release --bin play -- --moves 4453 --player2 ai   
+cargo run --release --bin play -- --moves 4453 --player2 ai        # Player 1 coins in rows 4 & 5, Player 2 coins in rows 4 & 3
 ```
 
 The AI plays perfectly, which means genuinely slow the first time it has to
@@ -56,6 +56,7 @@ search deep into an empty or near-empty board — expect the very first move
 from a fresh position to take tens of seconds.
 
 ## References 
+
 1. [John Trump's Connect Four page](https://tromp.github.io/c4/c4.html)
 2  [Fhourstones Benchmark](https://tromp.github.io/c4/fhour.html)
 3. ["The Complete Book of Connect Four",  James Dow Allen](https://fabpedigree.com/james/C4/c4_book.htm)
