@@ -20,7 +20,7 @@ const TT_SIZE: usize = 8_306_069;
 
 const SCORE_CHARS: [char; 6] = ['#', '-', '<', '=', '>', '+'];
 
-fn main() {
+fn main() -> io::Result<()> {
     const {
         debug_assert!(
             SIZE1 <= 64,
@@ -35,24 +35,20 @@ fn main() {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    writeln!(out, "Fhourstones 3.2 (Rust)").unwrap();
-    writeln!(out, "Boardsize = {}x{}", WIDTH, HEIGHT).unwrap();
+    writeln!(out, "Fhourstones 3.2 (Rust)")?;
+    writeln!(out, "Boardsize = {}x{}", WIDTH, HEIGHT)?;
     writeln!(
         out,
         "Using {} transposition table entries of size {} bytes.",
         TT_SIZE,
         std::mem::size_of::<u64>()
-    )
-    .unwrap();
+    )?;
 
     let mut solver = Solver::new(TT_SIZE);
     let stdin = io::stdin();
 
     for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+        let line = line?;
 
         let mut board = Board::new();
         for c in line.chars() {
@@ -64,9 +60,9 @@ fn main() {
             }
         }
 
-        write!(out, "\nSolving {}-ply position after ", board.nplies).unwrap();
-        write!(out, "{}", format_moves(&board)).unwrap();
-        writeln!(out, " . . .").unwrap();
+        write!(out, "\nSolving {}-ply position after ", board.nplies)?;
+        write!(out, "{}", format_moves(&board))?;
+        writeln!(out, " . . .")?;
 
         solver.tt.clear();
         let (score, nodes, ms) = solver.solve(&mut board);
@@ -74,21 +70,16 @@ fn main() {
 
         writeln!(
             out,
-            "score = {} ({})  work = {}",
-            score, SCORE_CHARS[score as usize], work
-        )
-        .unwrap();
+            "score = {score} ({})  work = {work}",
+            SCORE_CHARS[score as usize]
+        )?;
 
         let kpos_per_sec = nodes as f64 / ms as f64;
-        writeln!(
-            out,
-            "{} pos / {} msec = {:.1} Kpos/sec",
-            nodes, ms, kpos_per_sec
-        )
-        .unwrap();
+        writeln!(out, "{nodes} pos / {ms} msec = {kpos_per_sec:.1} Kpos/sec")?;
 
         if let Some(stats) = solver.tt.stats_line() {
-            writeln!(out, "{}", stats).unwrap();
+            writeln!(out, "{}", stats)?;
         }
     }
+    Ok(())
 }

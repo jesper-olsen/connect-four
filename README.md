@@ -6,7 +6,8 @@ perfect-play opponent.
 
 The solver is a negamax/alpha-beta engine with a transposition table and history-heuristic move
 ordering. It does not use a heuristic evaluation function - it searches the game tree from 
-root to terminals and finds exact scores. For a standard 7x6 connect four board, the game tree has4.5 trillion nodes (4,531,985,219,092).
+root to terminals and finds exact scores. 
+For a standard 7×6 board, there are 4,531,985,219,092 reachable positions [4] — the game tree (every distinct move sequence, without collapsing transpositions) is far larger and not precisely known.
 
 ![Gif Image interactive play](demo.gif)
 
