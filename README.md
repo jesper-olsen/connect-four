@@ -58,7 +58,7 @@ from a fresh position to take tens of seconds.
 ## References 
 
 1. [John Trump's Connect Four page](https://tromp.github.io/c4/c4.html)
-2  [Fhourstones Benchmark](https://tromp.github.io/c4/fhour.html)
+2. [Fhourstones Benchmark](https://tromp.github.io/c4/fhour.html)
 3. ["The Complete Book of Connect Four",  James Dow Allen](https://fabpedigree.com/james/C4/c4_book.htm)
 4. [Wikipedia's Conect Four](https://en.wikipedia.org/wiki/Connect_Four)
 
