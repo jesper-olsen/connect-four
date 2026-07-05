@@ -41,13 +41,9 @@ pub struct Board {
 
 impl Board {
     pub fn new() -> Self {
-        let mut height = [0u8; WIDTH];
-        for (i, h) in height.iter_mut().enumerate() {
-            *h = (H1 * i) as u8;
-        }
         Board {
             color: [0, 0],
-            height,
+            height: std::array::from_fn(|i| (H1 * i) as u8),
             moves: [0; SIZE],
             nplies: 0,
         }
