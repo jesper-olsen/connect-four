@@ -73,15 +73,17 @@ impl Board {
     }
 
     /// True iff `newboard` contains four in a row (horizontal, vertical, or either diagonal).
-    /// Mirrors Game.c's `haswon`, which treats the bitboard's truthiness as the answer.
     #[inline]
     pub fn has_won(newboard: u64) -> bool {
+        // each of the four directions is handled the same way:
+        // 1) detect adjacent coins 
+        // 2) shifts 'two positons' to detect 4 stones next to each other
         let diag1 = newboard & (newboard >> HEIGHT);
-        let hori = newboard & (newboard >> H1);
+        let hori = newboard & (newboard >> H1);   // 1=> pair of coins in a row
         let diag2 = newboard & (newboard >> H2);
         let vert = newboard & (newboard >> 1);
         let win = (diag1 & (diag1 >> (2 * HEIGHT)))
-            | (hori & (hori >> (2 * H1)))
+            | (hori & (hori >> (2 * H1)))         // 1 => 2 pairs of coins next to wach other
             | (diag2 & (diag2 >> (2 * H2)))
             | (vert & (vert >> 2));
         win != 0

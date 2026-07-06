@@ -1,16 +1,22 @@
-//! Interactive Connect Four TUI, built on the same board/search/tt engine
-//! as `solve.rs`. Unlike that benchmark driver, this keeps a single
-//! `Solver` (transposition table + history heuristic) alive for the whole
-//! game rather than clearing it before each move -- most of the tree
-//! explored on one turn remains valid on the next, so later moves get
-//! dramatically faster as the game goes on. The AI runs on a background
-//! thread so the UI stays responsive; expect the very first AI move from
-//! an empty board to take roughly as long as a full from-scratch solve
-//! (tens of seconds), with subsequent moves much quicker.
+//! Interactive Connect Four TUI, built on the same board/search/tt/minimax/
+//! mcts engines as the other binaries in this crate. Each seat is either a
+//! human or one of the three AI engines (`--player1`/`--player2`), and only
+//! the engines actually in use get constructed -- a Human-vs-Human game
+//! allocates no AI state at all.
+//!
+//! The perfect-play engine keeps its transposition table and history
+//! heuristic warm for the whole game rather than clearing them between
+//! moves, so later, shallower positions benefit from everything explored
+//! on earlier turns; expect its first move from a near-empty board to take
+//! roughly as long as a full from-scratch `solve` (tens of seconds), with
+//! subsequent moves much quicker. Minimax and MCTS have no equivalent
+//! cross-turn state (each move is planned from scratch), so their cost is
+//! roughly the same on every turn. Every AI search runs on a background
+//! thread so the UI stays responsive while it works.
 
-use clap::{Parser, ValueEnum};
+use connect_four::ai::{AiConfig, AiEngine, AiKind};
 use connect_four::board::{Board, H1, HEIGHT, SIZE, WIDTH};
-use connect_four::search::Solver;
+use clap::{Parser, ValueEnum};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     Terminal,
@@ -25,39 +31,48 @@ use std::{error::Error, io, time::Duration};
 const TT_SIZE: usize = 8_306_069;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
-enum ControllerArg {
+enum SeatArg {
     Human,
-    Ai,
+    Perfect,
+    Minimax,
+    Mcts,
 }
 
-impl From<ControllerArg> for Controller {
-    fn from(c: ControllerArg) -> Self {
-        match c {
-            ControllerArg::Human => Controller::Human,
-            ControllerArg::Ai => Controller::Ai,
+impl From<SeatArg> for Controller {
+    fn from(s: SeatArg) -> Self {
+        match s {
+            SeatArg::Human => Controller::Human,
+            SeatArg::Perfect => Controller::Ai(AiKind::Perfect),
+            SeatArg::Minimax => Controller::Ai(AiKind::Minimax),
+            SeatArg::Mcts => Controller::Ai(AiKind::Mcts),
         }
     }
 }
 
-/// Interactive Connect Four with an optional perfect-play AI opponent.
+/// Interactive Connect Four with a choice of AI opponents.
 #[derive(Parser, Debug)]
-#[command(
-    name = "play",
-    about = "Interactive Connect Four (perfect-play engine)"
-)]
+#[command(name = "play", about = "Interactive Connect Four")]
 struct Cli {
     /// Controller for Player 1 (red, moves first)
     #[arg(long, value_enum, default_value = "human", ignore_case = true)]
-    player1: ControllerArg,
+    player1: SeatArg,
 
     /// Controller for Player 2 (yellow)
-    #[arg(long, value_enum, default_value = "ai", ignore_case = true)]
-    player2: ControllerArg,
+    #[arg(long, value_enum, default_value = "perfect", ignore_case = true)]
+    player2: SeatArg,
 
     /// Starting position as a string of column digits 1..=7, e.g. "4453" --
     /// same format `solve` reads from stdin. Board starts empty if omitted.
     #[arg(long)]
     moves: Option<String>,
+
+    /// Search depth for any seat using the minimax AI.
+    #[arg(long, default_value_t = 8)]
+    depth: u32,
+
+    /// Thinking time budget, in milliseconds, for any seat using the MCTS AI.
+    #[arg(long, default_value_t = 2000)]
+    mcts_millis: u64,
 }
 
 /// Parse a `--moves`-style digit string into a `Board`, validating each move
@@ -91,18 +106,24 @@ pub enum Player {
 
 impl Player {
     fn from_side(side: usize) -> Self {
-        if side == 0 {
-            Player::Player1
-        } else {
-            Player::Player2
-        }
+        if side == 0 { Player::Player1 } else { Player::Player2 }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Controller {
     Human,
-    Ai,
+    Ai(AiKind),
+}
+
+/// Build the engine for each seat, allocating nothing at all for seats
+/// controlled by a human -- e.g. a Human-vs-Human game never touches the
+/// perfect solver's multi-megabyte transposition table.
+fn build_engines(controllers: [Controller; 2], config: &AiConfig) -> [Option<AiEngine>; 2] {
+    controllers.map(|c| match c {
+        Controller::Human => None,
+        Controller::Ai(kind) => Some(AiEngine::new(kind, config)),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +141,7 @@ pub struct App {
     initial_board: Board,
     pub controllers: [Controller; 2],
     pub wins: [u32; 2],
+    pub draws: u32,
     pub winner: Option<Player>,
     pub is_draw: bool,
     pub selected_column: usize,
@@ -141,6 +163,7 @@ impl App {
             initial_board: board,
             controllers,
             wins: [0, 0],
+            draws: 0,
             winner: None,
             is_draw: false,
             selected_column: WIDTH / 2,
@@ -152,7 +175,10 @@ impl App {
 
     /// Check whether the current board is already a completed game --
     /// needed because a preloaded position skips the normal
-    /// win/draw-detection-on-drop path in `update`.
+    /// win/draw-detection-on-drop path in `update`. Deliberately doesn't
+    /// touch `wins`/`draws`: those tallies count games actually concluded
+    /// through play (via `update`), not however many times `[r]` happens
+    /// to be pressed on an already-decided starting position.
     fn refresh_game_over_state(&mut self) {
         if Board::has_won(self.board.color[0]) {
             self.winner = Some(Player::Player1);
@@ -244,6 +270,7 @@ impl App {
             self.wins[mover as usize] += 1;
         } else if self.board.nplies == SIZE {
             self.is_draw = true;
+            self.draws += 1;
         }
     }
 }
@@ -251,16 +278,16 @@ impl App {
 pub fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
+    mut engines: [Option<AiEngine>; 2],
 ) -> Result<(), Box<dyn Error>> {
     let tick_rate = Duration::from_millis(33);
 
-    // While Some, an AI search is running on a background thread. The
-    // Solver is moved into the thread for the duration of the search (see
-    // below) and handed back over the channel alongside the chosen move,
-    // so its transposition table and history heuristic persist for the
-    // rest of the game.
-    let mut solver: Option<Solver> = Some(Solver::new(TT_SIZE));
-    let mut ai_move_rx: Option<mpsc::Receiver<(Option<usize>, Solver)>> = None;
+    // While Some, an AI search is running on a background thread for the
+    // given seat. The engine is moved into the thread for the duration of
+    // the search and handed back over the channel alongside the chosen
+    // move, so any state it carries (e.g. the perfect solver's
+    // transposition table) survives into that seat's next turn.
+    let mut ai_move_rx: Option<(usize, mpsc::Receiver<(Option<usize>, AiEngine)>)> = None;
 
     loop {
         terminal.draw(|f| ui(f, app, ai_move_rx.is_some()))?;
@@ -283,28 +310,28 @@ pub fn run_app(
         app.update();
 
         if app.falling_coin.is_none() && app.winner.is_none() && !app.is_draw {
-            let active_controller = app.controllers[app.current_turn() as usize];
-            if active_controller == Controller::Ai && ai_move_rx.is_none() {
+            let seat = app.current_turn() as usize;
+            if app.controllers[seat] != Controller::Human && ai_move_rx.is_none() {
                 let board = app.board; // Board is Copy
-                let mut s = solver
+                let mut engine = engines[seat]
                     .take()
-                    .expect("solver is only absent while a search is in flight");
+                    .expect("an AI-controlled seat always has an engine when not mid-search");
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
                     let mut b = board;
-                    let col = s.best_move(&mut b);
-                    let _ = tx.send((col, s));
+                    let col = engine.best_move(&mut b);
+                    let _ = tx.send((col, engine));
                 });
-                ai_move_rx = Some(rx);
-            } else if let Some(rx) = &ai_move_rx
-                && let Ok((chosen, returned_solver)) = rx.try_recv()
-            {
-                solver = Some(returned_solver);
-                if let Some(col) = chosen {
-                    app.selected_column = col;
-                    app.try_drop_coin();
+                ai_move_rx = Some((seat, rx));
+            } else if let Some((seat, rx)) = &ai_move_rx {
+                if let Ok((chosen, returned_engine)) = rx.try_recv() {
+                    engines[*seat] = Some(returned_engine);
+                    if let Some(col) = chosen {
+                        app.selected_column = col;
+                        app.try_drop_coin();
+                    }
+                    ai_move_rx = None;
                 }
-                ai_move_rx = None;
             }
         }
     }
@@ -325,14 +352,17 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
         .split(f.area());
 
     let width = chunks[0].width as usize;
-    let title_str = "  Connect 4 - Perfect-Play Engine";
-    let wins_str = format!("[Wins: P1: {} | P2: {}]  ", app.wins[0], app.wins[1]);
-    let mid_padding = width.saturating_sub(title_str.len() + wins_str.len());
+    let title_str = "  Connect Four";
+    let tally_str = format!(
+        "[Wins: P1: {} | P2: {} | Draws: {}]  ",
+        app.wins[0], app.wins[1], app.draws
+    );
+    let mid_padding = width.saturating_sub(title_str.len() + tally_str.len());
     let header_text = format!(
         "{}{}{}\n{}",
         title_str,
         " ".repeat(mid_padding),
-        wins_str,
+        tally_str,
         "=".repeat(width)
     );
     f.render_widget(Paragraph::new(header_text).cyan(), chunks[0]);
@@ -354,11 +384,7 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
             Player::Player1 => "Player 1's Turn (🔴)",
             Player::Player2 => "Player 2's Turn (🟡)",
         };
-        let suffix = if ai_thinking {
-            "  🤔 thinking..."
-        } else {
-            ""
-        };
+        let suffix = if ai_thinking { "  🤔 thinking..." } else { "" };
         Paragraph::new(format!("\n{}{}", turn_text, suffix))
             .style(Style::default())
             .alignment(Alignment::Center)
@@ -394,14 +420,13 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
                     Player::Player1 => " 🔴 ",
                     Player::Player2 => " 🟡 ",
                 };
-            } else if let Some(falling) = app.falling_coin
-                && falling.col == col
-                && falling.animation_row.round() as usize == row
-            {
-                token = match app.current_turn() {
-                    Player::Player1 => " 🔴 ",
-                    Player::Player2 => " 🟡 ",
-                };
+            } else if let Some(falling) = app.falling_coin {
+                if falling.col == col && falling.animation_row.round() as usize == row {
+                    token = match app.current_turn() {
+                        Player::Player1 => " 🔴 ",
+                        Player::Player2 => " 🟡 ",
+                    };
+                }
             }
             board_text.push_str(&format!("|{}", token));
         }
@@ -439,14 +464,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => Board::new(),
     };
 
+    let controllers = [cli.player1.into(), cli.player2.into()];
+    let ai_config = AiConfig {
+        tt_size: TT_SIZE,
+        minimax_depth: cli.depth,
+        mcts_budget: Duration::from_millis(cli.mcts_millis),
+    };
+    let engines = build_engines(controllers, &ai_config);
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::from_position(board, [cli.player1.into(), cli.player2.into()]);
-    let result = run_app(&mut terminal, &mut app);
+    let mut app = App::from_position(board, controllers);
+    let result = run_app(&mut terminal, &mut app, engines);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;

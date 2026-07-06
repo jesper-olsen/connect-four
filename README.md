@@ -1,13 +1,7 @@
 # Connect Four
 
 A Rust port of John Tromp's Fhourstones Connect Four solver +  
-a small interactive terminal UI built on top of it, using the solver as a
-perfect-play opponent.
-
-The solver is a negamax/alpha-beta engine with a transposition table and history-heuristic move
-ordering. It does not use a heuristic evaluation function - it searches the game tree from 
-root to terminals and finds exact scores. 
-For a standard 7×6 board, there are 4,531,985,219,092 reachable positions [4] — the game tree (every distinct move sequence, without collapsing transpositions) is far larger and not precisely known.
+a small interactive terminal UI built on top of it, using the solver as a perfect-play opponent.
 
 ![Gif Image interactive play](demo.gif)
 
@@ -45,16 +39,18 @@ speed, and a histogram of stored transposition-table entries by score.
 
 Usage: play (interactive)
 
+The play terminal app allows two players to play interactively.
+The flags `--player1` and `--player2` configures who plays each side.
+Choices are `human`, `perfect` (the solver), `minimax` (alpha-beta negamax [5]) and `mcts` (Monte Carlo Tree Search [6]). 
+
 ```
-cargo run --release --bin play                                     # Human (red) vs AI (yellow)
-cargo run --release --bin play -- --player1 human --player2 human  # two humans
-cargo run --release --bin play -- --player1 ai --player2 ai        # watch the AI play itself
-cargo run --release --bin play -- --moves 4453 --player2 ai        # Player 1 coins in rows 4 & 5, Player 2 coins in rows 4 & 3
+cargo run --release --bin play                                       # Human (red) vs perfect-play AI (yellow)
+cargo run --release --bin play -- --player1 human --player2 human    # two humans
+cargo run --release --bin play -- --player1 perfect --player2 perfect  # watch the perfect solver play itself
+cargo run --release --bin play -- --player1 minimax --depth 6 --player2 mcts --mcts-millis 1000
+cargo run --release --bin play -- --moves 4453 --player2 perfect     # start from a given position
 ```
 
-The AI plays perfectly, which means genuinely slow the first time it has to
-search deep into an empty or near-empty board — expect the very first move
-from a fresh position to take tens of seconds.
 
 ## References 
 
@@ -62,6 +58,8 @@ from a fresh position to take tens of seconds.
 2. [Fhourstones Benchmark](https://tromp.github.io/c4/fhour.html)
 3. ["The Complete Book of Connect Four",  James Dow Allen](https://fabpedigree.com/james/C4/c4_book.htm)
 4. [Wikipedia's Conect Four](https://en.wikipedia.org/wiki/Connect_Four)
+5. [Minimax](https://en.wikipedia.org/wiki/Minimax)
+6. [Monte Carlo Tree Search](https://en.wikipedia.org/wiki/Monte_Carlo_tree_search)
 
 ## License
 
