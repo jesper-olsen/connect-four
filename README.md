@@ -37,7 +37,7 @@ For each position it reports the game-theoretic score, log2 of positions
 stored in the transposition table ("work"), total nodes searched, search
 speed, and a histogram of stored transposition-table entries by score.
 
-Usage: play (interactive)
+## Usage: play (interactive)
 
 The play terminal app allows two players to play interactively.
 The flags `--player1` and `--player2` configures who plays each side.
