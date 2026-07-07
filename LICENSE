@@ -1,0 +1,13 @@
+This repository contains a Rust port of parts of John Tromp's Fhourstones Connect Four solver.
+
+The files src/board.rs, src/search.rs, and src/tt.rs are derived from the original Fhourstones C implementation and remain subject to the original license terms:
+
+Copyright (c) 1996-2005 by John Tromp.
+
+This notice must not be removed.
+
+This software must not be sold for profit.
+
+You may redistribute if your distributees have the same rights and restrictions.
+
+Unless otherwise noted, additional Rust code in this repository is copyright (c) 2026 Jesper Olsen and is distributed under the same terms.

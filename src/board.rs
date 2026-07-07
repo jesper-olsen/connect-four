@@ -11,6 +11,8 @@
 //!
 //! `color[nplies & 1]` is always the side to move.
 
+use std::fmt;
+
 pub const WIDTH: usize = 7;
 pub const HEIGHT: usize = 6;
 pub const H1: usize = HEIGHT + 1; // column stride, including guard row
@@ -37,6 +39,17 @@ pub struct Board {
     /// move history, column index per ply (0-based), used to unmake moves.
     pub moves: [u8; SIZE],
     pub nplies: usize,
+}
+
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+
+        write!(f, "Moves: ")?;
+        for m in &self.moves[0..self.nplies] {
+            write!(f, "{m}")?;
+        }
+        Ok(())
+    }
 }
 
 impl Board {

@@ -479,11 +479,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::from_position(board, controllers);
-    let result = run_app(&mut terminal, &mut app, engines);
+    run_app(&mut terminal, &mut app, engines)?;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    result
+    println!("{}", app.board);
+    Ok(())
 }

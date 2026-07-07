@@ -61,16 +61,3 @@ cargo run --release --bin play -- --moves 4453 --player2 perfect     # start fro
 5. [Minimax](https://en.wikipedia.org/wiki/Minimax)
 6. [Monte Carlo Tree Search](https://en.wikipedia.org/wiki/Monte_Carlo_tree_search)
 
-## License
-
-The engine is a derivative of John Tromp's original Fhourstones C
-implementation, which carries this notice:
-
-> This software is copyright (c) 1996-2005 by John Tromp.
-This notice must not be removed.
-This software must not be sold for profit.
-You may redistribute if your distributees have the same rights and
-restrictions.
-
-Those terms apply to this port as well.
-
