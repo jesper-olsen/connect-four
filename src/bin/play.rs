@@ -14,9 +14,9 @@
 //! roughly the same on every turn. Every AI search runs on a background
 //! thread so the UI stays responsive while it works.
 
+use clap::{Parser, ValueEnum};
 use connect_four::ai::{AiConfig, AiEngine, AiKind};
 use connect_four::board::{Board, H1, HEIGHT, SIZE, WIDTH};
-use clap::{Parser, ValueEnum};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     Terminal,
@@ -25,6 +25,7 @@ use ratatui::{
     style::{Color, Style, Stylize},
     widgets::Paragraph,
 };
+use std::fmt;
 use std::sync::mpsc;
 use std::{error::Error, io, time::Duration};
 
@@ -58,7 +59,7 @@ struct Cli {
     player1: SeatArg,
 
     /// Controller for Player 2 (yellow)
-    #[arg(long, value_enum, default_value = "perfect", ignore_case = true)]
+    #[arg(long, value_enum, default_value = "Mcts", ignore_case = true)]
     player2: SeatArg,
 
     /// Starting position as a string of column digits 1..=7, e.g. "4453" --
@@ -106,7 +107,11 @@ pub enum Player {
 
 impl Player {
     fn from_side(side: usize) -> Self {
-        if side == 0 { Player::Player1 } else { Player::Player2 }
+        if side == 0 {
+            Player::Player1
+        } else {
+            Player::Player2
+        }
     }
 }
 
@@ -114,6 +119,18 @@ impl Player {
 pub enum Controller {
     Human,
     Ai(AiKind),
+}
+
+impl fmt::Display for Controller {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Controller::Human => "Human",
+            Controller::Ai(AiKind::Perfect) => "Perfect",
+            Controller::Ai(AiKind::Minimax) => "MiniMax",
+            Controller::Ai(AiKind::Mcts) => "MCTS",
+        };
+        write!(f, "{s}")
+    }
 }
 
 /// Build the engine for each seat, allocating nothing at all for seats
@@ -318,20 +335,19 @@ pub fn run_app(
                     .expect("an AI-controlled seat always has an engine when not mid-search");
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
-                    let mut b = board;
-                    let col = engine.best_move(&mut b);
+                    let col = engine.best_move(&board);
                     let _ = tx.send((col, engine));
                 });
                 ai_move_rx = Some((seat, rx));
-            } else if let Some((seat, rx)) = &ai_move_rx {
-                if let Ok((chosen, returned_engine)) = rx.try_recv() {
-                    engines[*seat] = Some(returned_engine);
-                    if let Some(col) = chosen {
-                        app.selected_column = col;
-                        app.try_drop_coin();
-                    }
-                    ai_move_rx = None;
+            } else if let Some((seat, rx)) = &ai_move_rx
+                && let Ok((chosen, returned_engine)) = rx.try_recv()
+            {
+                engines[*seat] = Some(returned_engine);
+                if let Some(col) = chosen {
+                    app.selected_column = col;
+                    app.try_drop_coin();
                 }
+                ai_move_rx = None;
             }
         }
     }
@@ -352,7 +368,10 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
         .split(f.area());
 
     let width = chunks[0].width as usize;
-    let title_str = "  Connect Four";
+    let title_str = format!(
+        "  Connect Four - {} (🔴) vs {} (🟡)",
+        app.controllers[0], app.controllers[1]
+    );
     let tally_str = format!(
         "[Wins: P1: {} | P2: {} | Draws: {}]  ",
         app.wins[0], app.wins[1], app.draws
@@ -384,7 +403,11 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
             Player::Player1 => "Player 1's Turn (🔴)",
             Player::Player2 => "Player 2's Turn (🟡)",
         };
-        let suffix = if ai_thinking { "  🤔 thinking..." } else { "" };
+        let suffix = if ai_thinking {
+            "  🤔 thinking..."
+        } else {
+            ""
+        };
         Paragraph::new(format!("\n{}{}", turn_text, suffix))
             .style(Style::default())
             .alignment(Alignment::Center)
@@ -420,13 +443,14 @@ fn ui(f: &mut ratatui::Frame, app: &App, ai_thinking: bool) {
                     Player::Player1 => " 🔴 ",
                     Player::Player2 => " 🟡 ",
                 };
-            } else if let Some(falling) = app.falling_coin {
-                if falling.col == col && falling.animation_row.round() as usize == row {
-                    token = match app.current_turn() {
-                        Player::Player1 => " 🔴 ",
-                        Player::Player2 => " 🟡 ",
-                    };
-                }
+            } else if let Some(falling) = app.falling_coin
+                && falling.col == col
+                && falling.animation_row.round() as usize == row
+            {
+                token = match app.current_turn() {
+                    Player::Player1 => " 🔴 ",
+                    Player::Player2 => " 🟡 ",
+                };
             }
             board_text.push_str(&format!("|{}", token));
         }

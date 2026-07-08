@@ -43,7 +43,6 @@ pub struct Board {
 
 impl fmt::Display for Board {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         write!(f, "Moves: ")?;
         for m in &self.moves[0..self.nplies] {
             write!(f, "{m}")?;
@@ -89,10 +88,10 @@ impl Board {
     #[inline]
     pub fn has_won(newboard: u64) -> bool {
         // each of the four directions is handled the same way:
-        // 1) detect adjacent coins 
+        // 1) detect adjacent coins
         // 2) shifts 'two positons' to detect 4 stones next to each other
         let diag1 = newboard & (newboard >> HEIGHT);
-        let hori = newboard & (newboard >> H1);   // 1=> pair of coins in a row
+        let hori = newboard & (newboard >> H1); // 1=> pair of coins in a row
         let diag2 = newboard & (newboard >> H2);
         let vert = newboard & (newboard >> 1);
         let win = (diag1 & (diag1 >> (2 * HEIGHT)))
