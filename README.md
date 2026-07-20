@@ -1,7 +1,13 @@
 # Connect Four
 
-A Rust port of John Tromp's Fhourstones Connect Four solver +  
-a small interactive terminal UI built on top of it, using the solver as a perfect-play opponent.
+A Rust port of John Tromp's Fhourstones Connect Four solver + a terminal UI for interactive play.
+
+Connect-four [4] is a two player game, and the TUI allows the players to be drawn from:
+* Human
+* Perfect (the solver) [2]
+* Minimax [5]
+* Mcts (Monte Carlo Tree Search) [6]
+
 
 ![Gif Image interactive play](demo.gif)
 
